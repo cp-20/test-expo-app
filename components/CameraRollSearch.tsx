@@ -1,12 +1,11 @@
-import React, { useState, useEffect, FC, useCallback, useRef } from 'react';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, Image, FlatList, Button, Text } from 'react-native';
 import * as MediaLib from 'expo-media-library';
 import {
   RNMLKitFaceDetectionContextProvider,
   useFaceDetector,
-  useFacesInPhoto,
 } from '@infinitered/react-native-mlkit-face-detection';
-import SkeletonLoading from 'expo-skeleton-loading';
 import { Skeleton } from '@/components/Skeleton';
 
 type Photo =
@@ -40,7 +39,8 @@ export const CameraRollSearch = () => {
   const fetching = useRef(false);
   const fetchPhotos = useCallback(async () => {
     const limit = 10;
-    const fetchSize = 10;
+    const fetchSize = 50;
+    const resizeRatio = 10;
     console.log('fetching photos...');
 
     if (!permission) return;
@@ -67,24 +67,52 @@ export const CameraRollSearch = () => {
         });
         currentCursor = media.endCursor;
 
-        for (const asset of media.assets) {
-          const result = await detectFaces(asset.uri);
-          if (result === undefined) continue;
+        const faceDetectionPromises = media.assets.map(async (asset) => {
+          const resizedUri = await resizeImage(asset.uri, {
+            width: asset.width / resizeRatio,
+            height: asset.height / resizeRatio,
+          });
+          const result = await detectFaces(resizedUri);
+          if (result === undefined) return;
           console.log(`Faces detected in ${asset.uri}: ${result.faces.length}`);
-          if (result.faces.length === 1) {
+          if (result.faces.length === 0) return;
+
+          for (const [i, face] of result.faces.entries()) {
+            const angle = {
+              x: face.headEulerAngleX,
+              y: face.headEulerAngleY,
+              z: face.headEulerAngleZ,
+            };
+            if (angle.x == null || angle.y == null || angle.z == null) continue;
+            if (Math.abs(angle.x) > 20) continue;
+            if (Math.abs(angle.y) > 20) continue;
+            if (Math.abs(angle.z) > 20) continue;
+
+            const croppedUri = await cropImage(asset.uri, {
+              origin: {
+                x: face.frame.origin.x * resizeRatio,
+                y: face.frame.origin.y * resizeRatio,
+              },
+              size: {
+                x: face.frame.size.x * resizeRatio,
+                y: face.frame.size.y * resizeRatio,
+              },
+            });
+            const photo = {
+              type: 'photo' as const,
+              uri: croppedUri,
+              id: `${asset.id}-${i}`,
+            };
             setPhotos((prev) => {
               const index = prev.findIndex((p) => p.type === 'skeleton');
-              if (index === -1) return prev;
-              return [
-                ...prev.slice(0, index),
-                { type: 'photo', uri: asset.uri, id: asset.id },
-                ...prev.slice(index + 1),
-              ];
+              if (index === -1) return [...prev, photo];
+              return [...prev.slice(0, index), photo, ...prev.slice(index + 1)];
             });
             skeletonCount--;
-            if (skeletonCount === 0) break;
           }
-        }
+        });
+
+        await Promise.allSettled(faceDetectionPromises);
 
         if (!media.hasNextPage) {
           setPhotos((prev) => prev.filter((p) => p.type !== 'skeleton'));
@@ -100,11 +128,7 @@ export const CameraRollSearch = () => {
   }, [detectFaces, permission, photos]);
 
   useEffect(() => {
-    const restSkeletons = photos.filter((p) => p.type === 'skeleton').length;
-    console.log(`${restSkeletons} more skeletons left`);
-
     if (photos.length === 0) fetchPhotos();
-    if (photos.find((p) => p.type === 'skeleton')) fetchPhotos();
   }, [fetchPhotos, photos, photos.length]);
 
   if (permission === null) {
@@ -141,4 +165,44 @@ export const CameraRollSearch = () => {
       />
     </RNMLKitFaceDetectionContextProvider>
   );
+};
+
+// 画像を縮小する関数
+const resizeImage = async (
+  uri: string,
+  size: { width: number; height: number }
+): Promise<string> => {
+  const result = await ImageManipulator.manipulate(uri)
+    .resize(size)
+    .renderAsync();
+  const saved = await result.saveAsync({
+    compress: 1,
+    format: SaveFormat.WEBP,
+  });
+  return saved.uri;
+};
+
+// 画像を切り抜く関数
+const cropImage = async (
+  uri: string,
+  frame: {
+    origin: { x: number; y: number };
+    size: { x: number; y: number };
+  }
+): Promise<string> => {
+  // ここで画像を切り抜く処理を実装
+  // 例: expo-image-manipulatorを使用して画像を切り抜く
+  const result = await ImageManipulator.manipulate(uri)
+    .crop({
+      originX: frame.origin.x,
+      originY: frame.origin.y,
+      width: frame.size.x,
+      height: frame.size.y,
+    })
+    .renderAsync();
+  const saved = await result.saveAsync({
+    compress: 1,
+    format: SaveFormat.WEBP,
+  });
+  return saved.uri;
 };

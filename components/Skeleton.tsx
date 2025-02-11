@@ -1,5 +1,5 @@
 import { FC, useEffect, useRef } from 'react';
-import { StyleSheet, Animated } from 'react-native';
+import { StyleSheet, Animated, useColorScheme } from 'react-native';
 
 export type SkeletonProps = {
   width: number;
@@ -8,6 +8,7 @@ export type SkeletonProps = {
 
 export const Skeleton: FC<SkeletonProps> = ({ width, height }) => {
   const opacity = useRef(new Animated.Value(0.3)).current;
+  const colorScheme = useColorScheme();
 
   useEffect(() => {
     Animated.loop(
@@ -26,9 +27,13 @@ export const Skeleton: FC<SkeletonProps> = ({ width, height }) => {
     ).start();
   }, [opacity]);
 
-  return (
-    <Animated.View style={[styles.skeleton, { width, height, opacity }]} />
-  );
+  const skeletonStyle = [
+    styles.skeleton,
+    colorScheme === 'dark' ? darkModeStyles.skeleton : {},
+    { width, height, opacity },
+  ];
+
+  return <Animated.View style={skeletonStyle} />;
 };
 
 const styles = StyleSheet.create({
@@ -37,5 +42,11 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: '#f1f1f1',
     borderRadius: 4,
+  },
+});
+
+const darkModeStyles = StyleSheet.create({
+  skeleton: {
+    backgroundColor: '#333',
   },
 });
